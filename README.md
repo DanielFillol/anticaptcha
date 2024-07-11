@@ -1,6 +1,6 @@
 # AntiCaptcha Go Client Library
 
-Welcome to the AntiCaptcha Go Client Library! This library provides an easy-to-use interface to interact with the AntiCaptcha API, enabling you to solve image-based CAPTCHAs programmatically.
+Welcome to the AntiCaptcha Go Client Library! This library provides an easy-to-use interface to interact with the AntiCaptcha API, enabling you to solve image-based CAPTCHAs and HCaptcha challenges programmatically.
 
 ## Features
 
@@ -65,31 +65,89 @@ func main() {
     fmt.Printf("CAPTCHA Solution: %s\n", solution)
 }
 ```
+## Sending an Image CAPTCHA
+To send an HCaptcha challenge to the AntiCaptcha service and get the solution:
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "github.com/DanielFillol/anticaptcha"
+)
+
+func main() {
+    apiKey := "your_api_key_here"
+    client := anticaptcha.NewClient(apiKey, nil) // Using default logger
+
+    hCaptcha := anticaptcha.NewHCaptchaProxyless(client)
+    hCaptcha.SetWebsiteURL("https://website.com")
+    hCaptcha.SetWebsiteKey("SITE_KEY")
+    hCaptcha.SetIsInvisible(true)  // Optional: Set if HCaptcha is invisible
+    hCaptcha.SetIsEnterprise(true) // Optional: Set if HCaptcha is enterprise
+    hCaptcha.SetEnterprisePayload(map[string]interface{}{
+        "rqdata": "rq data value from target website",
+        "sentry": true,
+    }) // Optional: Set additional enterprise payload
+    hCaptcha.SetSoftID(0) // Optional: Set SoftID
+
+    gResponse, err := hCaptcha.SolveAndReturnSolution()
+    if err != nil {
+        log.Fatalf("Failed to solve HCaptcha: %v", err)
+    }
+
+    fmt.Printf("g-response: %s\n", gResponse)
+    fmt.Printf("user-agent: %s\n", hCaptcha.UserAgent)
+    fmt.Printf("respkey: %s\n", hCaptcha.RespKey)
+}
+
+```
+
 ## Polling for Task Results
-The SendImage method automatically handles polling for the task result. However, if you want to manually poll for results:
+The SendImage and SolveAndReturnSolution methods automatically handle polling for the task result. However, if you want to manually poll for results:
 
 ```go
-taskID, err := client.createTaskImage(ctx, imgString)
-if err != nil {
-    log.Fatalf("Failed to create task: %v", err)
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
+	"github.com/DanielFillol/anticaptcha"
+)
+
+func main() {
+	apiKey := "your_api_key_here"
+	client := anticaptcha.NewClient(apiKey, nil) // Using default logger
+
+	imgString := "base64_encoded_image_data_here"
+	ctx, cancel := context.WithTimeout(context.Background(), anticaptcha.DefaultTimeout)
+	defer cancel()
+
+	taskID, err := client.CreateTaskImage(ctx, imgString)
+	if err != nil {
+		log.Fatalf("Failed to create task: %v", err)
+	}
+
+	for {
+		result, err := client.GetTaskResult(ctx, taskID)
+		if err != nil {
+			log.Printf("Error checking task result: %v", err)
+			continue
+		}
+
+		if result["status"] == "ready" {
+			solution := result["solution"].(map[string]interface{})["text"].(string)
+			fmt.Printf("CAPTCHA Solved: %s\n", solution)
+			break
+		}
+
+		log.Println("Waiting for solution...")
+		time.Sleep(anticaptcha.CheckInterval)
+	}
 }
 
-for {
-    result, err := client.getTaskResult(ctx, taskID)
-    if err != nil {
-        log.Printf("Error checking task result: %v", err)
-        continue
-    }
-
-    if result["status"] == "ready" {
-        solution := result["solution"].(map[string]interface{})["text"].(string)
-        fmt.Printf("CAPTCHA Solved: %s\n", solution)
-        break
-    }
-
-    log.Println("Waiting for solution...")
-    time.Sleep(anticaptcha.CheckInterval)
-}
 ```
 ## Logging
 The client supports logging to help you track API requests and responses. You can either use the default logger or provide your own. Log messages include details about requests, responses, and errors.
@@ -97,8 +155,21 @@ The client supports logging to help you track API requests and responses. You ca
 ## Custom Logger
 To use a custom logger, pass a *log.Logger instance when creating the client:
 ```go
-customLogger := log.New(os.Stdout, "CustomAntiCaptcha: ", log.LstdFlags)
-client := anticaptcha.NewClient(apiKey, customLogger)
+package main
+
+import (
+	"log"
+	"os"
+	"github.com/DanielFillol/anticaptcha"
+)
+
+func main() {
+	apiKey := "your_api_key_here"
+	customLogger := log.New(os.Stdout, "CustomAntiCaptcha: ", log.LstdFlags)
+	client := anticaptcha.NewClient(apiKey, customLogger)
+
+	// Use the client with the custom logger...
+}
 ```
 If you pass nil, the default logger is used.
 
@@ -114,7 +185,6 @@ These constants can be adjusted as per your requirements.
 
 ## Contributing
 We welcome contributions to improve this library. Feel free to submit issues or pull requests on the GitHub repository.
-
 
 Feel free to explore and integrate the AntiCaptcha Go Client Library into your projects. If you encounter any issues or have suggestions, don't hesitate to contribute or reach out!
 

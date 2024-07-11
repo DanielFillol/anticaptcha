@@ -199,3 +199,130 @@ func (c *Client) SendImage(imgString string) (string, error) {
 		time.Sleep(checkInterval)
 	}
 }
+
+// HCaptchaProxyless represents the configuration for an HCaptcha proxyless task
+type HCaptchaProxyless struct {
+	Client            *Client
+	WebsiteURL        string
+	WebsiteKey        string
+	IsInvisible       bool
+	IsEnterprise      bool
+	EnterprisePayload map[string]interface{}
+	SoftID            int
+	UserAgent         string
+	RespKey           string
+}
+
+// NewHCaptchaProxyless creates a new HCaptchaProxyless task configuration
+func NewHCaptchaProxyless(client *Client) *HCaptchaProxyless {
+	return &HCaptchaProxyless{
+		Client:            client,
+		IsInvisible:       false,
+		IsEnterprise:      false,
+		EnterprisePayload: make(map[string]interface{}),
+		SoftID:            0,
+	}
+}
+
+// SetWebsiteURL sets the website URL for the HCaptcha task
+func (h *HCaptchaProxyless) SetWebsiteURL(url string) {
+	h.WebsiteURL = url
+}
+
+// SetWebsiteKey sets the website key for the HCaptcha task
+func (h *HCaptchaProxyless) SetWebsiteKey(key string) {
+	h.WebsiteKey = key
+}
+
+// SetIsInvisible sets whether the HCaptcha is invisible
+func (h *HCaptchaProxyless) SetIsInvisible(invisible bool) {
+	h.IsInvisible = invisible
+}
+
+// SetIsEnterprise sets whether the HCaptcha is enterprise
+func (h *HCaptchaProxyless) SetIsEnterprise(enterprise bool) {
+	h.IsEnterprise = enterprise
+}
+
+// SetEnterprisePayload sets the enterprise payload for the HCaptcha task
+func (h *HCaptchaProxyless) SetEnterprisePayload(payload map[string]interface{}) {
+	h.EnterprisePayload = payload
+}
+
+// SetSoftID sets the soft ID for the HCaptcha task
+func (h *HCaptchaProxyless) SetSoftID(softID int) {
+	h.SoftID = softID
+}
+
+// SolveAndReturnSolution creates the task, waits for the solution, and returns it
+func (h *HCaptchaProxyless) SolveAndReturnSolution() (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+
+	body := map[string]interface{}{
+		"clientKey": h.Client.APIKey,
+		"task": map[string]interface{}{
+			"type":              "HCaptchaTaskProxyless",
+			"websiteURL":        h.WebsiteURL,
+			"websiteKey":        h.WebsiteKey,
+			"isInvisible":       h.IsInvisible,
+			"isEnterprise":      h.IsEnterprise,
+			"enterprisePayload": h.EnterprisePayload,
+		},
+		"softId": h.SoftID,
+	}
+
+	h.Client.Logger.Println("Creating HCaptcha proxyless task...")
+
+	var response map[string]interface{}
+	err := h.Client.makeRequest(ctx, "/createTask", body, &response)
+	if err != nil {
+		h.Client.Logger.Printf("Failed to create task: %v\n", err)
+		return "", fmt.Errorf("failed to create task: %w", err)
+	}
+
+	if errMsg, ok := response["errorId"]; ok && errMsg.(float64) != 0 {
+		h.Client.Logger.Printf("API error creating task: %s\n", response["errorDescription"].(string))
+		return "", errors.New(response["errorDescription"].(string))
+	}
+
+	taskID, ok := response["taskId"].(float64)
+	if !ok {
+		h.Client.Logger.Println("Failed to retrieve taskId from response")
+		return "", errors.New("failed to retrieve taskId from response")
+	}
+
+	h.Client.Logger.Printf("Task created successfully with ID: %f\n", taskID)
+
+	// Poll for the task result until it's ready
+	for {
+		result, err := h.Client.getTaskResult(ctx, taskID)
+		if err != nil {
+			h.Client.Logger.Printf("Error getting task result: %v\n", err)
+			return "", fmt.Errorf("failed to get task result: %w", err)
+		}
+
+		if status, ok := result["status"].(string); ok && status == "ready" {
+			h.Client.Logger.Printf("Task ID %f is ready with solution.\n", taskID)
+			solution, ok := result["solution"].(map[string]interface{})
+			if !ok {
+				h.Client.Logger.Println("Invalid solution format in response")
+				return "", errors.New("invalid solution format in response")
+			}
+
+			gResponse, ok := solution["gRecaptchaResponse"].(string)
+			if !ok {
+				h.Client.Logger.Println("gRecaptchaResponse not found in solution")
+				return "", errors.New("gRecaptchaResponse not found in solution")
+			}
+
+			h.UserAgent = solution["userAgent"].(string)
+			h.RespKey = solution["respKey"].(string)
+			h.Client.Logger.Printf("HCaptcha solved successfully: %s\n", gResponse)
+			return gResponse, nil
+		}
+
+		h.Client.Logger.Printf("Task ID %f is still processing...\n", taskID)
+		time.Sleep(checkInterval)
+	}
+}
